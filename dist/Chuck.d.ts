@@ -14,15 +14,18 @@ export default class Chuck extends window.AudioWorkletNode {
     /** @internal */
     static chuginsToLoad: Filename[];
     private chugins;
+    worker: Worker;
+    initializedCallback: () => {};
+    constructor(context: AudioContext, options: AudioWorkletNodeOptions, whereIsChuck: string, initializedCallback?: () => {});
+    static init2(audioContext: AudioContext, whereIsChuck?: string, // default Chuck src location
+    initializedCallback?: () => {}): Promise<void | Chuck>;
     /**
-     * Private internal constructor for a ChucK AudioWorklet Web Audio Node. Use public **{@link init| Init}** to create a ChucK instance.
-     * @param preloadedFiles Array of Files to preload into ChucK's filesystem
-     * @param audioContext AudioContext to connect to
-     * @param wasm WebChucK WebAssembly binary
-     * @param numOutChannels Number of output channels
-     * @returns ChucK AudioWorklet Node
+     * Handles the initial event from the associated worker.
+     *
+     * @param {Event} eventFromWorker
      */
-    private constructor();
+    _onWorkerInitialized(eventFromWorker: any): void;
+    _onProcessorInitialized(eventFromProcessor: any): void;
     /**
      * Initialize a ChucK Web Audio Node. By default, a new AudioContext is created and ChucK is connected to the AudioContext destination.
      * **Note:** Init is overloaded to allow for custom AudioContext, custom number of output channels, and custom location of `whereIsChuck`. Skip an argument by passing in `undefined`.
@@ -58,7 +61,6 @@ export default class Chuck extends window.AudioWorkletNode {
      * @param whereIsChuck Optional custom url to your WebChucK `src` folder containing `webchuck.js` and `webchuck.wasm`. By default, `whereIsChuck` is {@link https://chuck.stanford.edu/webchuck/src | here}.
      * @returns WebChucK ChucK instance
      */
-    static init(filenamesToPreload: Filename[], audioContext?: AudioContext, numOutChannels?: number, whereIsChuck?: string): Promise<Chuck>;
     /**
      * Private function for ChucK to handle execution of tasks.
      * Will create a Deferred promise that wraps a task for WebChucK to execute

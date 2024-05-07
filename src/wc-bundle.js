@@ -35,52 +35,6 @@ class DeferredPromise {
     }
 }
 
-function readAsync(url, onload, onerror) {
-    const xhr = new XMLHttpRequest();
-    xhr.open("GET", url, true);
-    xhr.responseType = "arraybuffer";
-    xhr.onload = () => {
-        if (xhr.status == 200 || (xhr.status == 0 && xhr.response)) {
-            onload(xhr.response);
-        }
-        else {
-            onerror();
-        }
-    };
-    xhr.onerror = onerror;
-    xhr.send(null);
-}
-function asyncLoadFile(url, onload, onerror) {
-    readAsync(url, (arrayBuffer) => {
-        // TODO: do we need Uint8Array here?
-        onload(new Uint8Array(arrayBuffer));
-    }, () => {
-        if (onerror) {
-            onerror();
-        }
-        else {
-            throw new Error(`Loading data file ${url} failed.`);
-        }
-    });
-}
-async function preloadFiles(filenamesToPreload) {
-    const promises = filenamesToPreload.map((filenameToPreload) => new Promise((resolve, _reject) => {
-        asyncLoadFile(filenameToPreload.serverFilename, (byteArray) => {
-            resolve({
-                filename: filenameToPreload.virtualFilename,
-                data: byteArray,
-            });
-        }, () => {
-            console.error(`Error fetching file: ${filenameToPreload.serverFilename}`);
-        });
-    }));
-    return await Promise.all(promises);
-}
-async function loadWasm(whereIsChuck) {
-    return await new Promise((resolve, reject) => {
-        asyncLoadFile(whereIsChuck + "webchuck.wasm", resolve, reject);
-    });
-}
 const textFileExtensions = ["ck", "txt", "csv", "json", "xml", "html", "js"];
 function isPlaintextFile(filename) {
     const ext = filename.split(".").pop();
@@ -182,38 +136,81 @@ var InMessage;
  * Use **{@link init | Init}** to create a ChucK instance
  */
 class Chuck extends window.AudioWorkletNode {
-    /**
-     * Private internal constructor for a ChucK AudioWorklet Web Audio Node. Use public **{@link init| Init}** to create a ChucK instance.
-     * @param preloadedFiles Array of Files to preload into ChucK's filesystem
-     * @param audioContext AudioContext to connect to
-     * @param wasm WebChucK WebAssembly binary
-     * @param numOutChannels Number of output channels
-     * @returns ChucK AudioWorklet Node
-     */
-    constructor(preloadedFiles, audioContext, wasm, numOutChannels = 2) {
-        super(audioContext, "chuck-node", {
-            numberOfInputs: 1,
-            numberOfOutputs: 1,
-            // important: "number of inputs / outputs" is like an aggregate source
-            // most of the time, you only want one input source and one output
-            // source, but each one has multiple channels
-            outputChannelCount: [numOutChannels],
-            processorOptions: {
-                chuckID: Chuck.chuckID,
-                srate: audioContext.sampleRate,
-                preloadedFiles,
-                wasm,
-            },
-        });
+    constructor(context, options, whereIsChuck, initializedCallback) {
+        super(context, 'chuck-processor', options);
         this.deferredPromises = {};
         this.deferredPromiseCounter = 0;
         this.eventCallbacks = {};
         this.eventCallbackCounter = 0;
         this.isReady = defer();
         this.chugins = [];
-        this.port.onmessage = this.receiveMessage.bind(this);
-        this.onprocessorerror = (e) => console.error(e);
-        Chuck.chuckID++;
+        this.initializedCallback = initializedCallback;
+        this.worker = new Worker(whereIsChuck + "shared-buffer-worker.js");
+        this.worker.onmessage = this._onWorkerInitialized.bind(this);
+        this.port.onmessage = this._onProcessorInitialized.bind(this);
+        this.worker.postMessage({
+            message: 'INITIALIZE_WORKER',
+            options: {
+                ringBufferLength: 3072,
+                channelCount: 1
+            },
+        });
+        // this._workerOptions = (options && options.worker) ?
+        //     options.worker : {ringBufferLength: 3072, channelCount: 1};
+        // // Worker backend.
+        // this._worker = new Worker('shared-buffer-worker.js');
+        // // This node is a messaging hub for the Worker and AWP. After the initial
+        // // setup, the message passing between the worker and the process are rarely
+        // // necessary because of the SharedArrayBuffer.
+        // this._worker.onmessage = this._onWorkerInitialized.bind(this);
+        // // @tzfeng AWP posts to this port, which can go back to main scope
+        // this.port.onmessage = this._onProcessorInitialized.bind(this);
+        // // Initialize the worker.
+        // this._worker.postMessage({
+        //   message: 'INITIALIZE_WORKER',
+        //   options: {
+        //     ringBufferLength: this._workerOptions.ringBufferLength,
+        //     channelCount: this._workerOptions.channelCount,
+        //   },
+        // });
+    }
+    static async init2(
+    // filenamesToPreload: Filename[],
+    audioContext, 
+    // numOutChannels: number = 2,
+    whereIsChuck = "https://chuck.stanford.edu/webchuck/src/", // default Chuck src location
+    initializedCallback) {
+        await audioContext.audioWorklet.addModule(whereIsChuck + "ChuckProcessor.js");
+        const chuck = new Chuck(audioContext, {}, whereIsChuck, initializedCallback);
+        // await chuck.isReady.promise;
+        return chuck;
+    }
+    /**
+     * Handles the initial event from the associated worker.
+     *
+     * @param {Event} eventFromWorker
+     */
+    _onWorkerInitialized(eventFromWorker) {
+        const data = eventFromWorker.data;
+        if (data.message === 'WORKER_READY') {
+            // Send SharedArrayBuffers to the processor.
+            this.port.postMessage(data.SharedBuffers);
+            return;
+        }
+        if (data.message === 'WORKER_ERROR') {
+            console.log(`[ChuckWorklet] Worker Error: ${data.detail}`);
+            return;
+        }
+        console.log(`[ChuckWorklet] Unknown message: ${eventFromWorker}`);
+    }
+    _onProcessorInitialized(eventFromProcessor) {
+        const data = eventFromProcessor.data;
+        if (data.message === 'PROCESSOR_READY') {
+            // set isReady to resolve
+            // this.isReady.resolve();
+            this.initializedCallback();
+        }
+        console.log(`[SharedBufferWorklet] Unknown message: ${eventFromProcessor}`);
     }
     /**
      * Initialize a ChucK Web Audio Node. By default, a new AudioContext is created and ChucK is connected to the AudioContext destination.
@@ -250,29 +247,34 @@ class Chuck extends window.AudioWorkletNode {
      * @param whereIsChuck Optional custom url to your WebChucK `src` folder containing `webchuck.js` and `webchuck.wasm`. By default, `whereIsChuck` is {@link https://chuck.stanford.edu/webchuck/src | here}.
      * @returns WebChucK ChucK instance
      */
-    static async init(filenamesToPreload, audioContext, numOutChannels = 2, whereIsChuck = "https://chuck.stanford.edu/webchuck/src/") {
-        const wasm = await loadWasm(whereIsChuck);
-        let defaultAudioContext = false;
-        // If an audioContext is not given, create a default one
-        if (audioContext === undefined) {
-            audioContext = new AudioContext();
-            defaultAudioContext = true;
-        }
-        await audioContext.audioWorklet.addModule(whereIsChuck + "webchuck.js");
-        // Add Chugins to filenamesToPreload
-        filenamesToPreload = filenamesToPreload.concat(Chuck.chuginsToLoad);
-        const preloadedFiles = await preloadFiles(filenamesToPreload);
-        const chuck = new Chuck(preloadedFiles, audioContext, wasm, numOutChannels);
-        // Remember the chugins that were loaded
-        chuck.chugins = Chuck.chuginsToLoad.map((chugin) => chugin.virtualFilename.split("/").pop());
-        Chuck.chuginsToLoad = []; // clear
-        // Connect node to default destination if using default audio context
-        if (defaultAudioContext) {
-            chuck.connect(audioContext.destination); // default connection source
-        }
-        await chuck.isReady.promise;
-        return chuck;
-    }
+    // public static async init(
+    //   filenamesToPreload: Filename[],
+    //   audioContext?: AudioContext,
+    //   numOutChannels: number = 2,
+    //   whereIsChuck: string = "https://chuck.stanford.edu/webchuck/src/", // default Chuck src location
+    // ): Promise<Chuck> {
+    //   const wasm = await loadWasm(whereIsChuck);
+    //   let defaultAudioContext: boolean = false;
+    //   // If an audioContext is not given, create a default one
+    //   if (audioContext === undefined) {
+    //     audioContext = new AudioContext();
+    //     defaultAudioContext = true;
+    //   }
+    //   await audioContext.audioWorklet.addModule(whereIsChuck + "webchuck.js");
+    //   // Add Chugins to filenamesToPreload
+    //   filenamesToPreload = filenamesToPreload.concat(Chuck.chuginsToLoad);
+    //   const preloadedFiles = await preloadFiles(filenamesToPreload);
+    //   const chuck = new Chuck(preloadedFiles, audioContext, wasm, numOutChannels);
+    //   // Remember the chugins that were loaded
+    //   chuck.chugins = Chuck.chuginsToLoad.map((chugin) => chugin.virtualFilename.split("/").pop()!);
+    //   Chuck.chuginsToLoad = []; // clear
+    //   // Connect node to default destination if using default audio context
+    //   if (defaultAudioContext) {
+    //     chuck.connect(audioContext.destination); // default connection source
+    //   }
+    //   await chuck.isReady.promise;
+    //   return chuck;
+    // }
     /**
      * Private function for ChucK to handle execution of tasks.
      * Will create a Deferred promise that wraps a task for WebChucK to execute
