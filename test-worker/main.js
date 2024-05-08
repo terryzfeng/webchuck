@@ -12,7 +12,6 @@ let theChuck;
 var osc = new OscillatorNode(audioContext);
 
 var initialized = () => {
-    console.log('ChucK initialized');
     osc.connect(theChuck).connect(audioContext.destination);
     osc.start();
     audioContext.resume();

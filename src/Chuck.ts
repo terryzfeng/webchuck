@@ -76,12 +76,12 @@ export default class Chuck extends window.AudioWorkletNode {
   public worker: Worker;
   public initializedCallback: () => {};
 
-  constructor(context: AudioContext, options: {}, whereIsChuck: string, initializedCallback?: () => {}) {
+  constructor(context: AudioContext, options: {}, whereIsChuck: string, wasm: ArrayBuffer, initializedCallback?: () => {}) {
     super(context, 'chuck-processor', options);
 
     this.initializedCallback = initializedCallback!;
 
-    this.worker = new Worker(whereIsChuck + "shared-buffer-worker.js");
+    this.worker = new Worker(whereIsChuck + "webchuck-worker.js");
     this.worker.onmessage = this._onWorkerInitialized.bind(this);
 
     this.port.onmessage = this._onProcessorInitialized.bind(this);
@@ -92,6 +92,7 @@ export default class Chuck extends window.AudioWorkletNode {
         ringBufferLength: 3072,
         channelCount: 1
       },
+      wasm: wasm
     });
 
     // this._workerOptions = (options && options.worker) ?
@@ -125,9 +126,10 @@ export default class Chuck extends window.AudioWorkletNode {
     whereIsChuck: string = "https://chuck.stanford.edu/webchuck/src/", // default Chuck src location
     initializedCallback?: () => {}
   ): Promise<void | Chuck> {
+    const wasm = await loadWasm(whereIsChuck);
     await audioContext.audioWorklet.addModule( whereIsChuck + "ChuckProcessor.js");
 
-    const chuck = new Chuck(audioContext, {}, whereIsChuck, initializedCallback);
+    const chuck = new Chuck(audioContext, {}, whereIsChuck, wasm, initializedCallback);
     // await chuck.isReady.promise;
     return chuck;
   }
@@ -159,6 +161,7 @@ export default class Chuck extends window.AudioWorkletNode {
       // set isReady to resolve
       // this.isReady.resolve();
       this.initializedCallback();
+      return;
     }
 
     console.log(`[SharedBufferWorklet] Unknown message: ${eventFromProcessor}`);

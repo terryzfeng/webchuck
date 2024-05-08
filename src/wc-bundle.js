@@ -35,6 +35,39 @@ class DeferredPromise {
     }
 }
 
+function readAsync(url, onload, onerror) {
+    const xhr = new XMLHttpRequest();
+    xhr.open("GET", url, true);
+    xhr.responseType = "arraybuffer";
+    xhr.onload = () => {
+        if (xhr.status == 200 || (xhr.status == 0 && xhr.response)) {
+            onload(xhr.response);
+        }
+        else {
+            onerror();
+        }
+    };
+    xhr.onerror = onerror;
+    xhr.send(null);
+}
+function asyncLoadFile(url, onload, onerror) {
+    readAsync(url, (arrayBuffer) => {
+        // TODO: do we need Uint8Array here?
+        onload(new Uint8Array(arrayBuffer));
+    }, () => {
+        if (onerror) {
+            onerror();
+        }
+        else {
+            throw new Error(`Loading data file ${url} failed.`);
+        }
+    });
+}
+async function loadWasm(whereIsChuck) {
+    return await new Promise((resolve, reject) => {
+        asyncLoadFile(whereIsChuck + "webchuck.wasm", resolve, reject);
+    });
+}
 const textFileExtensions = ["ck", "txt", "csv", "json", "xml", "html", "js"];
 function isPlaintextFile(filename) {
     const ext = filename.split(".").pop();
@@ -136,7 +169,7 @@ var InMessage;
  * Use **{@link init | Init}** to create a ChucK instance
  */
 class Chuck extends window.AudioWorkletNode {
-    constructor(context, options, whereIsChuck, initializedCallback) {
+    constructor(context, options, whereIsChuck, wasm, initializedCallback) {
         super(context, 'chuck-processor', options);
         this.deferredPromises = {};
         this.deferredPromiseCounter = 0;
@@ -145,7 +178,7 @@ class Chuck extends window.AudioWorkletNode {
         this.isReady = defer();
         this.chugins = [];
         this.initializedCallback = initializedCallback;
-        this.worker = new Worker(whereIsChuck + "shared-buffer-worker.js");
+        this.worker = new Worker(whereIsChuck + "webchuck-worker.js");
         this.worker.onmessage = this._onWorkerInitialized.bind(this);
         this.port.onmessage = this._onProcessorInitialized.bind(this);
         this.worker.postMessage({
@@ -154,6 +187,7 @@ class Chuck extends window.AudioWorkletNode {
                 ringBufferLength: 3072,
                 channelCount: 1
             },
+            wasm: wasm
         });
         // this._workerOptions = (options && options.worker) ?
         //     options.worker : {ringBufferLength: 3072, channelCount: 1};
@@ -180,8 +214,9 @@ class Chuck extends window.AudioWorkletNode {
     // numOutChannels: number = 2,
     whereIsChuck = "https://chuck.stanford.edu/webchuck/src/", // default Chuck src location
     initializedCallback) {
+        const wasm = await loadWasm(whereIsChuck);
         await audioContext.audioWorklet.addModule(whereIsChuck + "ChuckProcessor.js");
-        const chuck = new Chuck(audioContext, {}, whereIsChuck, initializedCallback);
+        const chuck = new Chuck(audioContext, {}, whereIsChuck, wasm, initializedCallback);
         // await chuck.isReady.promise;
         return chuck;
     }
@@ -209,6 +244,7 @@ class Chuck extends window.AudioWorkletNode {
             // set isReady to resolve
             // this.isReady.resolve();
             this.initializedCallback();
+            return;
         }
         console.log(`[SharedBufferWorklet] Unknown message: ${eventFromProcessor}`);
     }

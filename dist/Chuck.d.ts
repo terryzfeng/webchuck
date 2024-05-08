@@ -16,7 +16,7 @@ export default class Chuck extends window.AudioWorkletNode {
     private chugins;
     worker: Worker;
     initializedCallback: () => {};
-    constructor(context: AudioContext, options: AudioWorkletNodeOptions, whereIsChuck: string, initializedCallback?: () => {});
+    constructor(context: AudioContext, options: {}, whereIsChuck: string, wasm: ArrayBuffer, initializedCallback?: () => {});
     static init2(audioContext: AudioContext, whereIsChuck?: string, // default Chuck src location
     initializedCallback?: () => {}): Promise<void | Chuck>;
     /**

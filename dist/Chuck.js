@@ -13,14 +13,14 @@
  *  - Clear: Methods like clearChuckInstance and clearGlobals allow clearing the ChucK instance and its global state.
  *  - Private: Private methods like sendMessage and receiveMessage handle messaging between the Chuck class and the AudioWorklet.
  */
-import { defer, isPlaintextFile } from "./utils";
+import { defer, isPlaintextFile, loadWasm } from "./utils";
 import { InMessage, OutMessage } from "./enums";
 /**
  * WebChucK: ChucK Web Audio Node class.
  * Use **{@link init | Init}** to create a ChucK instance
  */
 export default class Chuck extends window.AudioWorkletNode {
-    constructor(context, options, whereIsChuck, initializedCallback) {
+    constructor(context, options, whereIsChuck, wasm, initializedCallback) {
         super(context, 'chuck-processor', options);
         this.deferredPromises = {};
         this.deferredPromiseCounter = 0;
@@ -29,7 +29,7 @@ export default class Chuck extends window.AudioWorkletNode {
         this.isReady = defer();
         this.chugins = [];
         this.initializedCallback = initializedCallback;
-        this.worker = new Worker(whereIsChuck + "shared-buffer-worker.js");
+        this.worker = new Worker(whereIsChuck + "webchuck-worker.js");
         this.worker.onmessage = this._onWorkerInitialized.bind(this);
         this.port.onmessage = this._onProcessorInitialized.bind(this);
         this.worker.postMessage({
@@ -38,6 +38,7 @@ export default class Chuck extends window.AudioWorkletNode {
                 ringBufferLength: 3072,
                 channelCount: 1
             },
+            wasm: wasm
         });
         // this._workerOptions = (options && options.worker) ?
         //     options.worker : {ringBufferLength: 3072, channelCount: 1};
@@ -64,8 +65,9 @@ export default class Chuck extends window.AudioWorkletNode {
     // numOutChannels: number = 2,
     whereIsChuck = "https://chuck.stanford.edu/webchuck/src/", // default Chuck src location
     initializedCallback) {
+        const wasm = await loadWasm(whereIsChuck);
         await audioContext.audioWorklet.addModule(whereIsChuck + "ChuckProcessor.js");
-        const chuck = new Chuck(audioContext, {}, whereIsChuck, initializedCallback);
+        const chuck = new Chuck(audioContext, {}, whereIsChuck, wasm, initializedCallback);
         // await chuck.isReady.promise;
         return chuck;
     }
@@ -93,6 +95,7 @@ export default class Chuck extends window.AudioWorkletNode {
             // set isReady to resolve
             // this.isReady.resolve();
             this.initializedCallback();
+            return;
         }
         console.log(`[SharedBufferWorklet] Unknown message: ${eventFromProcessor}`);
     }
