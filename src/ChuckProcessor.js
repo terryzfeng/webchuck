@@ -134,5 +134,4 @@ class ChuckProcessor extends AudioWorkletProcessor {
     }
 }
 
-registerProcessor(
-    'chuck-processor', ChuckProcessor);
+registerProcessor('chuck-processor', ChuckProcessor);

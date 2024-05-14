@@ -89,7 +89,7 @@ export default class Chuck extends window.AudioWorkletNode {
     this.worker.postMessage({
       message: 'INITIALIZE_WORKER',
       options: {
-        ringBufferLength: 3072,
+        // ringBufferLength: 3072, // lol
         channelCount: 1
       },
       wasm: wasm
