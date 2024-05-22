@@ -93,8 +93,7 @@ export default class Chuck extends window.AudioWorkletNode {
             console.error(`[ChuckWorklet] Worker Error: ${data.detail}`);
         }
         else {
-            // Pass messages from worker back out to main
-            console.log(`[ChuckWorklet] Unknown message: ${eventFromWorker}`);
+            // Pass Chuck Worker messages back to main
             this.receiveMessage(eventFromWorker);
         }
     }
@@ -988,6 +987,7 @@ export default class Chuck extends window.AudioWorkletNode {
                 }
                 break;
             default:
+                console.error("Unknown message: " + type);
                 break;
         }
     }
