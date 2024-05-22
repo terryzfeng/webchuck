@@ -37,7 +37,6 @@ class ChuckProcessor extends AudioWorkletProcessor {
      */
     _initializeOnEvent(eventFromWorker) {
         const sharedBuffers = eventFromWorker.data;
-        console.log('SharedBuffers:', sharedBuffers);
 
         // Get the states buffer.
         this._states = new Int32Array(sharedBuffers.states);

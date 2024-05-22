@@ -164,11 +164,9 @@ export default class Chuck extends window.AudioWorkletNode {
     } else if (data.message === "WORKER_ERROR") {
       console.error(`[ChuckWorklet] Worker Error: ${data.detail}`);
     } else {
-      // Pass messages from worker back out to main
+      // Pass Chuck Worker messages back to main
       this.receiveMessage(eventFromWorker);
     }
-
-    // console.log(`[ChuckWorklet] Unknown message: ${eventFromWorker}`);
   }
 
   _onProcessorInitialized(eventFromProcessor: any) {
@@ -1062,7 +1060,9 @@ export default class Chuck extends window.AudioWorkletNode {
    */
   private sendMessage(type: OutMessage, body?: { [prop: string]: unknown }) {
     const msgBody = body ? { type, ...body } : { type };
-    this.port.postMessage(msgBody);
+    // this.port.postMessage(msgBody);
+    // TODO: @tzfeng changed to worker
+    this.worker.postMessage(msgBody);
   }
 
   /**
@@ -1146,6 +1146,7 @@ export default class Chuck extends window.AudioWorkletNode {
         }
         break;
       default:
+        console.error("Unknown message: " + type);
         break;
     }
   }

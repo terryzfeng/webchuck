@@ -17,8 +17,9 @@ document.getElementById('action').addEventListener('click', async () => {
         theChuck = await Chuck.init2([], audioContext, undefined, "../src/");
         // TODO: @tzfeng 
         // only works when there is input going into chuck, otherwise atomic is never triggered
-        // osc.connect(theChuck).connect(audioContext.destination);
         theChuck.connect(audioContext.destination);
+        const id = await theChuck.runCode("SinOsc osc => dac; 1::second => now;");
+        console.log("shredId", id);
         audioContext.resume();
     }
 });

@@ -500,6 +500,8 @@ const CHUCK_ID = 1; // Chuck ID
 let _chuckWasmModule = undefined; // Module
 let _heapInputBuffer = undefined; // HeapAudioBuffer
 let _heapOutputBuffer = undefined; // HeapAudioBuffer
+let _myActiveShreds = []; // Active shreds
+let _myPointers = {}; // Pointers
 
 
 /**
@@ -521,21 +523,18 @@ function processKernel() {
   _heapInputBuffer.adaptChannel( 1 ); // TODO: @tzfeng hardcoded to 1 channel
 
   // Copy shared input ring buffer into chuck's heap
-  // determine index where ring buffer splits
-  const splitIndex = Math.min(CONFIG.kernelLength + inputReadIndex, CONFIG.ringBufferLength);
-  const firstHalfLength = splitIndex - inputReadIndex; // how many samples in first half
-  // copy first half (or to end of ring buffer)
-  _heapInputBuffer.getChannelData(0).set(InputRingBuffer[0].subarray(inputReadIndex, splitIndex));
-  // check if data crosses ring buffer boundary (wraparound)
-  if (firstHalfLength < CONFIG.kernelLength) {
-    // if so, copy the second half from the beginning of the ring buffer
-    _heapInputBuffer.getChannelData(0).set(InputRingBuffer[0].subarray(0, CONFIG.kernelLength - firstHalfLength));
-    inputReadIndex = CONFIG.kernelLength - firstHalfLength // update read index to start of second half 
+  if (inputReadIndex + CONFIG.kernelLength < CONFIG.ringBufferLength) {
+    // If we can copy the entire kernel from ring buffer
+    _heapInputBuffer.getChannelData(0).set(InputRingBuffer[0].subarray(inputReadIndex, inputReadIndex + CONFIG.kernelLength));
+    inputReadIndex += CONFIG.kernelLength;
   } else {
-    inputReadIndex += CONFIG.kernelLength
-    if (inputReadIndex === CONFIG.ringBufferLength) {
-      inputReadIndex = 0;
-    }
+    // When we cross the ring buffer boundary and need to wraparound, copy in two parts
+    const splitIndex = CONFIG.ringBufferLength - inputReadIndex;
+    const firstHalf = InputRingBuffer[0].subarray(inputReadIndex); // index to end
+    const secondHalf = InputRingBuffer[0].subarray(0, CONFIG.kernelLength - splitIndex); // beginning to leftover index
+    _heapInputBuffer.getChannelData(0).set(firstHalf);
+    _heapInputBuffer.getChannelData(0).set(secondHalf, firstHalf.length); // start at end of first half
+    inputReadIndex = secondHalf.length;
   }
 
   // Chuck process input and output buffers 
@@ -551,20 +550,18 @@ function processKernel() {
   _heapOutputBuffer.adaptChannel( 1 );
 
   // Copy chuck's heap into shared output ring buffer
-  // determine index for where to split ring buffer
-  const outputFirstHalfLength = Math.min(CONFIG.kernelLength, CONFIG.ringBufferLength - outputWriteIndex);
-  // copy first half (or to end of ring buffer)
-  OutputRingBuffer[0].set(_heapOutputBuffer.getChannelData(0).subarray(0, outputFirstHalfLength), outputWriteIndex);
-  // check if data crosses ring buffer boundary (wraparound)
-  if (outputFirstHalfLength < CONFIG.kernelLength) { 
-    // if so, copy the second half from the beginning of the ring buffer
-    OutputRingBuffer[0].set(_heapOutputBuffer.getChannelData(0).subarray(outputFirstHalfLength)); // copy second half to the end
-    outputWriteIndex = CONFIG.kernelLength - outputFirstHalfLength; // update write index to start of second half
-  } else {
+  if (outputWriteIndex + CONFIG.kernelLength < CONFIG.ringBufferLength) {
+    // If we can copy the entire kernel from ring buffer
+    OutputRingBuffer[0].set(_heapOutputBuffer.getChannelData(0), outputWriteIndex);
     outputWriteIndex += CONFIG.kernelLength;
-    if (outputWriteIndex === CONFIG.ringBufferLength) {
-      outputWriteIndex = 0;
-    }
+  } else {
+    // When we cross the ring buffer boundary and need to wraparound, copy in two parts
+    const splitIndex = CONFIG.ringBufferLength - outputWriteIndex;
+    const firstHalf = _heapOutputBuffer.getChannelData(0).subarray(0, splitIndex);
+    const secondHalf = _heapOutputBuffer.getChannelData(0).subarray(splitIndex);
+    OutputRingBuffer[0].set(firstHalf, outputWriteIndex);
+    OutputRingBuffer[0].set(secondHalf, 0);
+    outputWriteIndex = secondHalf.length;
   }
 
   States[STATE.IB_READ_INDEX] = inputReadIndex;
@@ -646,30 +643,17 @@ async function initialize(options, preloadedFiles, wasm) {
     SharedBuffers: SharedBuffers,
   });
 
-  // TODO: just a test
-  runChuckCode(CHUCK_ID, `SinOsc osc => dac; 10::second => now;`);
+  // just a poc test
+  // runChuckCode(CHUCK_ID, `SinOsc osc => dac; 10::second => now;`);
 
   // Start waiting.
-  waitOnRenderRequest();
+  // waitOnRenderRequest();
 }
 
-/**
- * RECEIVE MESSAGES FROM CHUCK.TS 
- */
-onmessage = async (eventFromMain) => {
-  if (eventFromMain.data.message === 'INITIALIZE_WORKER') {
-    await initialize(eventFromMain.data.options, eventFromMain.data.preloadedFiles, eventFromMain.data.wasm);
-    return;
-  }
-
-  console.log('[ChuckWorker] Unknown message: ', eventFromMain);
-};
-
-
 
 /**
- * Terry and Andrew wrote this
- * @tzfeng
+ * Initialize a ChucK Emscripten WASM module
+ * Written by @tzfeng @azaday
  */
 async function initChuckWasm(preloadedFiles, wasm) {
   // Emscripten Premodule
@@ -705,6 +689,524 @@ async function initChuckWasm(preloadedFiles, wasm) {
   initChuckInstance(CHUCK_ID, CONFIG.sampleRate, CONFIG.channelCount, CONFIG.channelCount);
 }
 
+
+//---------------------------------------------------------------------
+// ChucK Helper Functions (actions)
+//---------------------------------------------------------------------
+function _handleNewShredID(newShredID, shredCallback) {
+  if (newShredID > 0) {
+    // keep track for myself
+    _myActiveShreds.push(newShredID);
+  } else {
+    // compilation failed
+  }
+  // tell the host
+  postMessage({
+    type: "newShredCallback",
+    callback: shredCallback,
+    shred: newShredID
+  });
+}
+
+function _handleReplacedShredID( oldShredID, newShredID, shredCallback ) {
+  if (newShredID > 0) {
+    // keep track for myself
+    _myActiveShreds.push(newShredID);
+  } else {
+    // compilation failed --> we did not actually remove oldShredID
+    _myActiveShreds.push(oldShredID);
+  }
+  // tell the host
+  postMessage({
+    type: "replacedShredCallback",
+    callback: shredCallback,
+    newShred: newShredID,
+    oldShred: oldShredID
+  });
+}
+
+function _handleRemoveShred(shredID, callback) {
+  if (removeShred(CHUCK_ID, shredID)) {
+    _handleRemovedShredID(shredID, callback);
+  } else {
+    _handleRemovedShredID(0, callback);
+  }
+}
+
+function _handleRemovedShredID(shredID, shredCallback) {
+  postMessage({
+    type: "removedShredCallback",
+    callback: shredCallback,
+    shred: shredID
+  });
+}
+
+function _findMostRecentActiveShred() {
+  // find the most recent shred that is still active,
+  // and forget about all the more recently shredded ones
+  // that are no longer active
+  let shredID = _myActiveShreds.pop();
+  while (shredID && !isShredActive(CHUCK_ID, shredID)) {
+    shredID = _myActiveShreds.pop();
+  }
+  return shredID;
+}
+
+function _findShredToReplace()
+{
+  let shredToReplace = _findMostRecentActiveShred();
+  if (!shredToReplace) {
+    postMessage({
+      type: "console print",
+      message: "[chuck](VM): no shreds to replace..."
+    });
+  }
+  return shredToReplace;
+}
+
+
+//---------------------------------------------------------------------
+// Message Handling from Chuck.ts (Main Thread)
+//---------------------------------------------------------------------
+/**
+ * Handle messages from the main thread to worker (us)
+ */
+onmessage = async (eventFromMain) => {
+  console.log("[worker] received message:", eventFromMain.data.message)
+
+  if (eventFromMain.data.message === 'INITIALIZE_WORKER') {
+    await initialize(eventFromMain.data.options, eventFromMain.data.preloadedFiles, eventFromMain.data.wasm);
+    return;
+  }
+
+  // Chuck action messages
+  handle_message(eventFromMain);
+};
+
+/**
+ * Handles messages for Chuck actions from main thread
+ * @param {*} event 
+ */
+function handle_message(event) {
+  switch (event.data.type) {
+    // ================== Filesystem ===================== //
+    case 'createFile':
+      _chuckWasmModule.FS_createDataFile('/' + event.data.directory,
+        event.data.filename, event.data.data, true, true, true);
+      break;
+    // ================== Run / Compile ================== //
+    case 'runChuckCode': {
+      const shredID = runChuckCode(CHUCK_ID, event.data.code);
+      _handleNewShredID(shredID, event.data.callback);
+      break;
+    }
+    case 'runChuckCodeWithReplacementDac': {
+      const shredID = runChuckCodeWithReplacementDac(CHUCK_ID, event.data.code, event.data.dac_name);
+      _handleNewShredID(shredID, event.data.callback);
+      break;
+    }
+    case 'runChuckFile': {
+      const shredID = runChuckFile(CHUCK_ID, event.data.filename);
+      _handleNewShredID(shredID, event.data.callback);
+      break;
+    }
+    case 'runChuckFileWithReplacementDac': {
+      const shredID = runChuckFileWithReplacementDac(CHUCK_ID, event.data.filename, event.data.dac_name);
+      _handleNewShredID(shredID, event.data.callback);
+      break;
+    }
+    case 'runChuckFileWithArgs': {
+      const shredID = runChuckFileWithArgs(CHUCK_ID, event.data.filename, event.data.colon_separated_args);
+      _handleNewShredID(shredID, event.data.callback);
+      break;
+    }
+    case 'runChuckFileWithArgsWithReplacementDac': {
+      const shredID = runChuckFileWithArgsWithReplacementDac(CHUCK_ID, event.data.filename, event.data.colon_separated_args, event.data.dac_name);
+      _handleNewShredID(shredID, event.data.callback);
+      break;
+    }
+    case 'replaceChuckCode': {
+      const shredToReplace = _findShredToReplace();
+      if (shredToReplace) {
+        let shredID = replaceChuckCode(CHUCK_ID, shredToReplace, event.data.code);
+        _handleReplacedShredID(shredToReplace, shredID, event.data.callback);
+      }
+      break;
+    }
+    case 'replaceChuckCodeWithReplacementDac': {
+      const shredToReplace = _findShredToReplace();
+      if (shredToReplace) {
+        const shredID = replaceChuckCodeWithReplacementDac(CHUCK_ID, shredToReplace, event.data.code, event.data.dac_name);
+        _handleReplacedShredID(shredToReplace, shredID, event.data.callback);
+      }
+      break;
+    }
+    case 'replaceChuckFile': {
+      const shredToReplace = _findShredToReplace();
+      if (shredToReplace) {
+        const shredID = replaceChuckFile(CHUCK_ID, shredToReplace, event.data.filename);
+        _handleReplacedShredID(shredToReplace, shredID, event.data.callback);
+      }
+      break;
+    }
+    case 'replaceChuckFileWithReplacementDac': {
+      const shredToReplace = _findShredToReplace();
+      if (shredToReplace) {
+        const shredID = replaceChuckFileWithReplacementDac(CHUCK_ID, shredToReplace, event.data.filename, event.data.dac_name);
+        _handleReplacedShredID(shredToReplace, shredID, event.data.callback);
+      }
+      break;
+    }
+    case 'replaceChuckFileWithArgs': {
+      const shredToReplace = _findShredToReplace();
+      if (shredToReplace) {
+        const shredID = replaceChuckFileWithArgs(CHUCK_ID, shredToReplace, event.data.filename, event.data.colon_separated_args);
+        _handleReplacedShredID(shredToReplace, shredID, event.data.callback);
+      }
+      break;
+    }
+    case 'replaceChuckFileWithArgsWithReplacementDac': {
+      const shredToReplace = _findShredToReplace();
+      if (shredToReplace) {
+        const shredID = replaceChuckFileWithArgsWithReplacementDac(CHUCK_ID, shredToReplace, event.data.filename, event.data.colon_separated_args, event.data.dac_name);
+        _handleReplacedShredID(shredToReplace, shredID, event.data.callback);
+      }
+      break;
+    }
+    case 'removeLastCode': {
+      const shredID = this.findMostRecentActiveShred();
+      // if we found a shred, remove it, otherwise,
+      // there are no shreds left to remove
+      if (shredID) {
+        _handleRemoveShred(shredID, event.data.callback);
+      } else {
+        postMessage({
+          type: "console print",
+          message: "[chuck](VM): no shreds to remove..."
+        });
+      }
+      break;
+    }
+    case 'removeShred': {
+      _handleRemoveShred(event.data.shred, event.data.callback);
+      break;
+    }
+    case 'isShredActive': {
+      postMessage({
+        type: "intCallback",
+        callback: event.data.callback,
+        result: isShredActive(CHUCK_ID, event.data.shred)
+      });
+      break;
+    }
+    // ================== Int, Float, String ============= //
+    case 'setChuckInt': {
+      setChuckInt(CHUCK_ID, event.data.variable, event.data.value);
+      break;
+    }
+    case 'getChuckInt': {
+      const result = getChuckInt(CHUCK_ID, event.data.variable);
+      postMessage({ type: "intCallback", callback: event.data.callback, result: result });
+      break;
+    }
+    case 'setChuckFloat': {
+      setChuckFloat(CHUCK_ID, event.data.variable, event.data.value);
+      break;
+    }
+    case 'getChuckFloat': {
+      const result = getChuckFloat(CHUCK_ID, event.data.variable);
+      postMessage({ type: "floatCallback", callback: event.data.callback, result: result });
+      break;
+    }
+    case 'setChuckString': {
+      setChuckString(CHUCK_ID, event.data.variable, event.data.value);
+      break;
+    }
+    case 'getChuckString': {
+      // (function (thePort, theCallback, theVariable, theID, Module) {
+      //   let pointer = _chuckWasmModule.addFunction((function (thePort, theCallback) {
+      //     return function (string_ptr) {
+      //       thePort.postMessage({
+      //         type: "stringCallback",
+      //         callback: theCallback,
+      //         result: Module.UTF8ToString(string_ptr)
+      //       });
+      //       Module.removeFunction(pointer);
+      //     }
+      //   })(thePort, theCallback), 'vi');
+      //   getChuckString(theID, theVariable, pointer);
+      // })(this.port, event.data.callback, event.data.variable, CHUCK_ID, this.Module);
+      // break;
+      const { callback, variable } = event.data;
+      const pointer = _chuckWasmModule.addFunction((string_ptr) => {
+        postMessage({
+          type: "stringCallback",
+          callback,
+          result: _chuckWasmModule.UTF8ToString(string_ptr)
+        });
+        _chuckWasmModule.removeFunction(pointer);
+      }, 'vi');
+      getChuckString(CHUCK_ID, variable, pointer);
+      break;
+    }
+    // ================== Event =================== //
+    case 'signalChuckEvent': {
+      signalChuckEvent(CHUCK_ID, event.data.variable);
+      break;
+    }
+    case 'broadcastChuckEvent': {
+      broadcastChuckEvent(CHUCK_ID, event.data.variable);
+      break;
+    }
+    case 'listenForChuckEventOnce': {
+      // (function (thePort, theCallback, theVariable, theID, Module) {
+      //   let pointer = Module.addFunction((function (thePort, theCallback) {
+      //     return function () {
+      //       thePort.postMessage({ type: "eventCallback", callback: theCallback });
+      //       Module.removeFunction(pointer);
+      //     }
+      //   })(thePort, theCallback), 'v');
+      //   listenForChuckEventOnce(theID, theVariable, pointer);
+      // })(this.port, event.data.callback, event.data.variable, CHUCK_ID, this.Module);
+      // break;
+      const { callback, variable } = event.data;
+      const pointer = _chuckWasmModule.addFunction(() => {
+        postMessage({ type: "eventCallback", callback });
+        _chuckWasmModule.removeFunction(pointer);
+      }, 'v');
+      listenForChuckEventOnce(CHUCK_ID, variable, pointer);
+      break;
+    }
+    case 'startListeningForChuckEvent': {
+      // this.myPointers[event.data.callback] = this.Module.addFunction((function (thePort, theCallback) {
+      //   return function () {
+      //     thePort.postMessage({ type: "eventCallback", callback: theCallback });
+      //   }
+      // })(this.port, event.data.callback), 'v');
+      // startListeningForChuckEvent(CHUCK_ID, event.data.variable, this.myPointers[event.data.callback]);
+      // break;
+      const { callback, variable } = event.data;
+      _myPointers[callback] = _chuckWasmModule.addFunction(() => {
+        postMessage({ type: "eventCallback", callback });
+      }, 'v');
+      startListeningForChuckEvent(CHUCK_ID, variable, _myPointers[callback]);
+      break;
+    }
+    case 'stopListeningForChuckEvent': {
+      stopListeningForChuckEvent(CHUCK_ID, event.data.variable, _myPointers[event.data.callback]);
+      _chuckWasmModule.removeFunction(_myPointers[event.data.callback]);
+      break;
+    }
+    // ================== Int[] =================== //
+    case 'setGlobalIntArray': {
+      // convert to Int32Array
+      const values = new Int32Array(event.data.values);
+      // put onto heap
+      const valuesPtr = _chuckWasmModule._malloc(values.length * values.BYTES_PER_ELEMENT);
+      const heapview = _chuckWasmModule.HEAP32.subarray((valuesPtr >> 2), (valuesPtr >> 2) + values.length);
+      heapview.set(values);
+
+      // put variable name on heap as well
+      const stringBytes = event.data.variable.length << 2 + 1;
+      const stringPtr = _chuckWasmModule._malloc(stringBytes);
+      _chuckWasmModule.stringToUTF8(event.data.variable, stringPtr, stringBytes);
+
+      // call
+      _chuckWasmModule._setGlobalIntArray(CHUCK_ID, stringPtr, valuesPtr, values.length);
+
+      // free
+      _chuckWasmModule._free(valuesPtr);
+      _chuckWasmModule._free(stringPtr);
+      break;
+    }
+    case 'getGlobalIntArray': {
+      // (function (thePort, theCallback, theVariable, theID, Module) {
+      //   let pointer = Module.addFunction((function (thePort, theCallback) {
+      //     return function (int32_ptr, len) {
+      //       let result = new Int32Array(
+      //         Module.HEAPU8.buffer,
+      //         int32_ptr,
+      //         len
+      //       );
+      //       thePort.postMessage({
+      //         type: "intArrayCallback",
+      //         callback: theCallback,
+      //         result: Array.from(result)
+      //       });
+      //       Module.removeFunction(pointer);
+      //     }
+      //   })(thePort, theCallback), 'vii');
+      //   getGlobalIntArray(theID, theVariable, pointer);
+      // })(this.port, event.data.callback, event.data.variable, CHUCK_ID, this.Module);
+      // break;
+      const { callback, variable } = event.data;
+      const pointer = _chuckWasmModule.addFunction((int32_ptr, len) => {
+        const result = new Int32Array(
+          _chuckWasmModule.HEAPU8.buffer,
+          int32_ptr,
+          len
+        );
+        postMessage({
+          type: "intArrayCallback",
+          callback,
+          result: Array.from(result)
+        });
+        _chuckWasmModule.removeFunction(pointer);
+      }, 'vii');
+      getGlobalIntArray(CHUCK_ID, variable, pointer);
+      break;
+    }
+    case 'setGlobalIntArrayValue': {
+      setGlobalIntArrayValue(CHUCK_ID, event.data.variable, event.data.index, event.data.value);
+      break;
+    }
+    case 'getGlobalIntArrayValue': {
+      const result = getGlobalIntArrayValue(CHUCK_ID, event.data.variable, event.data.index);
+      postMessage({ type: "intCallback", callback: event.data.callback, result: result });
+      break;
+    }
+    case 'setGlobalAssociativeIntArrayValue': {
+      setGlobalAssociativeIntArrayValue(CHUCK_ID, event.data.variable, event.data.key, event.data.value);
+      break;
+    }
+    case 'getGlobalAssociativeIntArrayValue': {
+      const result = getGlobalAssociativeIntArrayValue(CHUCK_ID, event.data.variable, event.data.key);
+      postMessage({ type: "intCallback", callback: event.data.callback, result: result });
+      break;
+    }
+    // ================== Float[] =================== //
+    case 'setGlobalFloatArray': {
+      // convert to Float64Array
+      const values = new Float64Array(event.data.values);
+      // put onto heap
+      const valuesPtr = _chuckWasmModule._malloc(values.length * values.BYTES_PER_ELEMENT);
+      const heapview = _chuckWasmModule.HEAPF64.subarray((valuesPtr >> 3), (valuesPtr >> 3) + values.length);
+      heapview.set(values);
+
+      // put variable name on heap as well
+      const stringBytes = event.data.variable.length << 2 + 1;
+      const stringPtr = _chuckWasmModule._malloc(stringBytes);
+      _chuckWasmModule.stringToUTF8(event.data.variable, stringPtr, stringBytes);
+
+      // call
+      _chuckWasmModule._setGlobalFloatArray(CHUCK_ID, stringPtr, valuesPtr, values.length);
+
+      // free
+      _chuckWasmModule._free(valuesPtr);
+      _chuckWasmModule._free(stringPtr);
+      break;
+    }
+    case 'getGlobalFloatArray': {
+      // (function (thePort, theCallback, theVariable, theID, Module) {
+      //   let pointer = Module.addFunction((function (thePort, theCallback) {
+      //     return function (float64_ptr, len) {
+      //       let result = new Float64Array(
+      //         Module.HEAPU8.buffer,
+      //         float64_ptr,
+      //         len
+      //       );
+      //       thePort.postMessage({
+      //         type: "floatArrayCallback",
+      //         callback: theCallback,
+      //         result: Array.from(result)
+      //       });
+      //       Module.removeFunction(pointer);
+      //     }
+      //   })(thePort, theCallback), 'vii');
+      //   getGlobalFloatArray(theID, theVariable, pointer);
+      // })(this.port, event.data.callback, event.data.variable, CHUCK_ID, this.Module);
+      // break;
+      const { callback, variable } = event.data;
+      const pointer = _chuckWasmModule.addFunction((float64_ptr, len) => {
+        const result = new Float64Array(
+          _chuckWasmModule.HEAPU8.buffer,
+          float64_ptr,
+          len
+        );
+        postMessage({
+          type: "floatArrayCallback",
+          callback,
+          result: Array.from(result)
+        });
+        _chuckWasmModule.removeFunction(pointer);
+      }, 'vii');
+      getGlobalFloatArray(CHUCK_ID, variable, pointer);
+      break;
+    }
+    case 'setGlobalFloatArrayValue': {
+      setGlobalFloatArrayValue(CHUCK_ID, event.data.variable, event.data.index, event.data.value);
+      break;
+    }
+    case 'getGlobalFloatArrayValue': {
+      const result = getGlobalFloatArrayValue(CHUCK_ID, event.data.variable, event.data.index);
+      postMessage({ type: "floatCallback", callback: event.data.callback, result: result });
+      break;
+    }
+    case 'setGlobalAssociativeFloatArrayValue': {
+      setGlobalAssociativeFloatArrayValue(CHUCK_ID, event.data.variable, event.data.key, event.data.value);
+      break;
+    }
+    case 'getGlobalAssociativeFloatArrayValue': {
+      const result = getGlobalAssociativeFloatArrayValue(CHUCK_ID, event.data.variable, event.data.key);
+      postMessage({ type: "floatCallback", callback: event.data.callback, result: result });
+      break;
+    }
+    // ==================== VM Param Functions ======================
+    // 1.5.0.8 (ge) added
+    case 'setParamInt': {
+      setParamInt(CHUCK_ID, event.data.name, event.data.value);
+      break;
+    }
+    case 'getParamInt': {
+      const result = getParamInt(CHUCK_ID, event.data.name);
+      postMessage({ type: "intCallback", callback: event.data.callback, result: result });
+      break;
+    }
+    case 'setParamFloat': {
+      setParamFloat(CHUCK_ID, event.data.name, event.data.value);
+      break;
+    }
+    case 'getParamFloat': {
+      const result = getParamFloat(CHUCK_ID, event.data.name);
+      postMessage({ type: "floatCallback", callback: event.data.callback, result: result });
+      break;
+    }
+    case 'setParamString': {
+      setParamString(CHUCK_ID, event.data.name, event.data.value);
+      break;
+    }
+    case 'getParamString': {
+      const result = getParamString(CHUCK_ID, event.data.name);
+      postMessage({ type: "stringCallback", callback: event.data.callback, result: result });
+      break;
+    }
+    // ==================== VM Functions ====================== //
+    case 'now':
+    case 'getChuckNow': {
+      const result = getChuckNow(CHUCK_ID);
+      postMessage({ type: "floatCallback", callback: event.data.callback, result: result });
+      break;
+    }
+    case 'clearChuckInstance': {
+      clearChuckInstance(CHUCK_ID);
+      break;
+    }
+    case 'clearGlobals': {
+      clearGlobals(CHUCK_ID);
+      postMessage({
+        type: "console print",
+        message: "[chuck](VM): resetting all global variables"
+      });
+      break;
+    }
+    default:
+      postMessage({
+        type: "console error",
+        message: "webchuck unknown message"
+      })
+      break;
+  }
+}
 
 
 //-------------------------------------------------------------------------
@@ -746,7 +1248,7 @@ async function initChuckWasm(preloadedFiles, wasm) {
 //     {
 //         if( !globalInit )
 //         {
-//             var PreModule = {
+//             let PreModule = {
 //                 wasmBinary: wasm,
 //                 print: (function( self ) 
 //                     {

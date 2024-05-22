@@ -256,9 +256,9 @@ class Chuck extends window.AudioWorkletNode {
         }
         else {
             // Pass messages from worker back out to main
+            console.log(`[ChuckWorklet] Unknown message: ${eventFromWorker}`);
             this.receiveMessage(eventFromWorker);
         }
-        // console.log(`[ChuckWorklet] Unknown message: ${eventFromWorker}`);
     }
     _onProcessorInitialized(eventFromProcessor) {
         const data = eventFromProcessor.data;
@@ -1063,7 +1063,9 @@ class Chuck extends window.AudioWorkletNode {
      */
     sendMessage(type, body) {
         const msgBody = body ? { type, ...body } : { type };
-        this.port.postMessage(msgBody);
+        // this.port.postMessage(msgBody);
+        // TODO: @tzfeng changed to worker
+        this.worker.postMessage(msgBody);
     }
     /**
      * @hidden
