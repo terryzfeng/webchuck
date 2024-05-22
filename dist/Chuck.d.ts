@@ -1,4 +1,4 @@
-import type { Filename } from "./utils";
+import type { File, Filename } from "./utils";
 /**
  * WebChucK: ChucK Web Audio Node class.
  * Use **{@link init | Init}** to create a ChucK instance
@@ -15,12 +15,11 @@ export default class Chuck extends window.AudioWorkletNode {
     static chuginsToLoad: Filename[];
     private chugins;
     worker: Worker;
-    initializedCallback: () => {};
-    constructor(context: AudioContext, options: {}, whereIsChuck: string, wasm: ArrayBuffer, initializedCallback?: () => {});
-    static init2(audioContext: AudioContext, whereIsChuck?: string, // default Chuck src location
-    initializedCallback?: () => {}): Promise<void | Chuck>;
+    constructor(preloadedFiles: File[], audioContext: AudioContext, whereIsChuck: string, wasm: ArrayBuffer, numOutChannels?: number);
+    static init2(filenamesToPreload: Filename[], audioContext: AudioContext, numOutChannels?: number, // TODO: change to 2
+    whereIsChuck?: string): Promise<Chuck>;
     /**
-     * Handles the initial event from the associated worker.
+     * Handle messages from WebChuck Worker
      *
      * @param {Event} eventFromWorker
      */

@@ -13,32 +13,32 @@
  *  - Clear: Methods like clearChuckInstance and clearGlobals allow clearing the ChucK instance and its global state.
  *  - Private: Private methods like sendMessage and receiveMessage handle messaging between the Chuck class and the AudioWorklet.
  */
-import { defer, isPlaintextFile, loadWasm } from "./utils";
+import { defer, isPlaintextFile, loadWasm, preloadFiles } from "./utils";
 import { InMessage, OutMessage } from "./enums";
 /**
  * WebChucK: ChucK Web Audio Node class.
  * Use **{@link init | Init}** to create a ChucK instance
  */
 export default class Chuck extends window.AudioWorkletNode {
-    constructor(context, options, whereIsChuck, wasm, initializedCallback) {
-        super(context, 'chuck-processor', options);
+    constructor(preloadedFiles, audioContext, whereIsChuck, wasm, numOutChannels = 1) {
+        super(audioContext, "chuck-processor", {});
         this.deferredPromises = {};
         this.deferredPromiseCounter = 0;
         this.eventCallbacks = {};
         this.eventCallbackCounter = 0;
         this.isReady = defer();
         this.chugins = [];
-        this.initializedCallback = initializedCallback;
         this.worker = new Worker(whereIsChuck + "webchuck-worker.js");
         this.worker.onmessage = this._onWorkerInitialized.bind(this);
         this.port.onmessage = this._onProcessorInitialized.bind(this);
         this.worker.postMessage({
-            message: 'INITIALIZE_WORKER',
+            message: "INITIALIZE_WORKER",
             options: {
-                // ringBufferLength: 3072, // lol
-                channelCount: 1
+                srate: audioContext.sampleRate,
+                channelCount: numOutChannels,
             },
-            wasm: wasm
+            preloadedFiles: preloadedFiles,
+            wasm: wasm,
         });
         // this._workerOptions = (options && options.worker) ?
         //     options.worker : {ringBufferLength: 3072, channelCount: 1};
@@ -59,45 +59,54 @@ export default class Chuck extends window.AudioWorkletNode {
         //   },
         // });
     }
-    static async init2(
-    // filenamesToPreload: Filename[],
-    audioContext, 
-    // numOutChannels: number = 2,
-    whereIsChuck = "https://chuck.stanford.edu/webchuck/src/", // default Chuck src location
-    initializedCallback) {
+    static async init2(filenamesToPreload, audioContext, numOutChannels = 1, // TODO: change to 2
+    whereIsChuck = "https://chuck.stanford.edu/webchuck/src/") {
         const wasm = await loadWasm(whereIsChuck);
-        await audioContext.audioWorklet.addModule(whereIsChuck + "ChuckProcessor.js");
-        const chuck = new Chuck(audioContext, {}, whereIsChuck, wasm, initializedCallback);
-        // await chuck.isReady.promise;
+        let defaultAudioContext = false;
+        // If an audioContext is not given, create a default one
+        if (audioContext === undefined) {
+            audioContext = new AudioContext();
+            defaultAudioContext = true;
+        }
+        await audioContext.audioWorklet.addModule(whereIsChuck + "chuck-processor.js");
+        const preloadedFiles = await preloadFiles(filenamesToPreload);
+        const chuck = new Chuck(preloadedFiles, audioContext, whereIsChuck, wasm, numOutChannels);
+        if (defaultAudioContext) {
+            chuck.connect(audioContext.destination); // default connection source
+        }
+        await chuck.isReady.promise;
+        console.log("chuck is ready");
         return chuck;
     }
     /**
-     * Handles the initial event from the associated worker.
+     * Handle messages from WebChuck Worker
      *
      * @param {Event} eventFromWorker
      */
     _onWorkerInitialized(eventFromWorker) {
         const data = eventFromWorker.data;
-        if (data.message === 'WORKER_READY') {
+        if (data.message === "WORKER_READY") {
             // Send SharedArrayBuffers to the processor.
             this.port.postMessage(data.SharedBuffers);
-            return;
         }
-        if (data.message === 'WORKER_ERROR') {
-            console.log(`[ChuckWorklet] Worker Error: ${data.detail}`);
-            return;
+        else if (data.message === "WORKER_ERROR") {
+            console.error(`[ChuckWorklet] Worker Error: ${data.detail}`);
         }
-        console.log(`[ChuckWorklet] Unknown message: ${eventFromWorker}`);
+        else {
+            // Pass messages from worker back out to main
+            this.receiveMessage(eventFromWorker);
+        }
+        // console.log(`[ChuckWorklet] Unknown message: ${eventFromWorker}`);
     }
     _onProcessorInitialized(eventFromProcessor) {
         const data = eventFromProcessor.data;
-        if (data.message === 'PROCESSOR_READY') {
-            // set isReady to resolve
-            // this.isReady.resolve();
-            this.initializedCallback();
+        if (data.message === "PROCESSOR_READY") {
+            if (this.isReady && this.isReady.resolve) {
+                this.isReady.resolve();
+            }
             return;
         }
-        console.log(`[SharedBufferWorklet] Unknown message: ${eventFromProcessor}`);
+        console.log(`[SharedBufferProcessor] Unknown message: ${eventFromProcessor}`);
     }
     /**
      * Initialize a ChucK Web Audio Node. By default, a new AudioContext is created and ChucK is connected to the AudioContext destination.

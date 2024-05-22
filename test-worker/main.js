@@ -5,20 +5,20 @@
 import { Chuck } from '../src/wc-bundle.js';
 
 let audioContext = new AudioContext();
+window.audioContext = audioContext;
 audioContext.suspend();
+let osc = audioContext.createOscillator();
 
 let theChuck;
-// window.theChuck = theChuck;
-var osc = new OscillatorNode(audioContext);
 
-var initialized = () => {
-    osc.connect(theChuck).connect(audioContext.destination);
-    osc.start();
-    audioContext.resume();
-}
 document.getElementById('action').addEventListener('click', async () => {
     // Initialize default ChucK object, if not already initialized
     if (theChuck === undefined) {
-        theChuck = await Chuck.init2(audioContext, "../src/", initialized);
+        theChuck = await Chuck.init2([], audioContext, undefined, "../src/");
+        // TODO: @tzfeng 
+        // only works when there is input going into chuck, otherwise atomic is never triggered
+        // osc.connect(theChuck).connect(audioContext.destination);
+        theChuck.connect(audioContext.destination);
+        audioContext.resume();
     }
 });
