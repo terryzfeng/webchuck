@@ -104,16 +104,16 @@ export default class Chuck extends window.AudioWorkletNode {
      */
     static async init(filenamesToPreload, audioContext, numOutChannels = 2, whereIsChuck = "https://chuck.stanford.edu/webchuck/src/") {
         const wasm = await loadWasm(whereIsChuck);
-        let defaultAudioContext = false;
-        // If an audioContext is not given, create a default one
-        if (audioContext === undefined) {
-            audioContext = new AudioContext();
-            defaultAudioContext = true;
-        }
-        await audioContext.audioWorklet.addModule(whereIsChuck + "webchuck.js");
         // Add Chugins to filenamesToPreload
         filenamesToPreload = filenamesToPreload.concat(Chuck.chuginsToLoad);
         const preloadedFiles = await preloadFiles(filenamesToPreload);
+        let defaultContextFlag = false;
+        // If an audioContext is not given, create a default one
+        if (audioContext === undefined) {
+            audioContext = new AudioContext();
+            defaultContextFlag = true;
+        }
+        await audioContext.audioWorklet.addModule(whereIsChuck + "webchuck.js");
         const processorOptions = {
             numberOfInputs: 1,
             numberOfOutputs: 1,
@@ -134,7 +134,7 @@ export default class Chuck extends window.AudioWorkletNode {
         chuck.chugins = Chuck.chuginsToLoad.map((chugin) => chugin.virtualFilename.split("/").pop());
         Chuck.chuginsToLoad = []; // clear
         // Connect node to default destination if using default audio context
-        if (defaultAudioContext) {
+        if (defaultContextFlag) {
             chuck.connect(audioContext.destination); // default connection source
         }
         await chuck.isReady.promise;
@@ -241,9 +241,19 @@ export default class Chuck extends window.AudioWorkletNode {
     }
     // ================== Filesystem ===================== //
     /**
-     * Create a virtual file in ChucK's filesystem.
-     * You should first locally {@link https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch | fetch} the contents of your file, then pass the data to this method.
-     * Alternatively, you can use {@link loadFile} to automatically fetch and load a file from a URL.
+     * Create a virtual file in ChucK's filesystem after ChucK's initialization.
+     * File can be plain text or binary data (.wav, .ck, etc.).
+     * **Recommended:** use {@link loadFile} to automatically fetch and load a file from a URL.
+     * **Note:** If asynchronous file creation can be avoided, use {@link init} to preload your files instead.
+     *
+     * @example
+     * ```ts
+     * fetch("./myFile.ck")
+     *  .then(response => response.text())
+     *  .then(data => theChuck.createFile("./", "myFile.ck", data))
+     *  .then(theChuck.runFile("myFile.ck"));
+     * ```
+     *
      * @param directory Virtual directory to create file in
      * @param filename Name of file to create
      * @param data Data to write to the file
@@ -256,11 +266,22 @@ export default class Chuck extends window.AudioWorkletNode {
         });
     }
     /**
-     * Automatically fetch and load in a file from a URL to ChucK's virtual filesystem
+     * Asynchronously fetch and load a file from URL to ChucK's virtual filesystem after ChucK's initialization.
+     * File can be plain text or binary data (.wav, .ck, etc.).
+     * **Note:** If asynchronous loading can be avoided, use {@link init} to preload your files instead.
+     *
      * @example
      * ```ts
-     * theChuck.loadFile("./myFile.ck");
+     * await theChuck.loadFile("./myFile.ck");
+     * theChuck.runFile("myFile.ck")
      * ```
+     *
+     * @example
+     * ```ts
+     * await theChuck.loadFile("myFile.wav");
+     * theChuck.runCode(`SndBuf buf("myFile.wav"); buf.length => now;`);
+     * ```
+     *
      * @param url path or url to a file to fetch and load file
      * @returns Promise of fetch request
      */

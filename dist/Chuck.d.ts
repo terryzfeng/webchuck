@@ -118,20 +118,41 @@ export default class Chuck extends window.AudioWorkletNode {
      */
     private nextDeferID;
     /**
-     * Create a virtual file in ChucK's filesystem.
-     * You should first locally {@link https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch | fetch} the contents of your file, then pass the data to this method.
-     * Alternatively, you can use {@link loadFile} to automatically fetch and load a file from a URL.
+     * Create a virtual file in ChucK's filesystem after ChucK's initialization.
+     * File can be plain text or binary data (.wav, .ck, etc.).
+     * **Recommended:** use {@link loadFile} to automatically fetch and load a file from a URL.
+     * **Note:** If asynchronous file creation can be avoided, use {@link init} to preload your files instead.
+     *
+     * @example
+     * ```ts
+     * fetch("./myFile.ck")
+     *  .then(response => response.text())
+     *  .then(data => theChuck.createFile("./", "myFile.ck", data))
+     *  .then(theChuck.runFile("myFile.ck"));
+     * ```
+     *
      * @param directory Virtual directory to create file in
      * @param filename Name of file to create
      * @param data Data to write to the file
      */
     createFile(directory: string, filename: string, data: string | ArrayBuffer): void;
     /**
-     * Automatically fetch and load in a file from a URL to ChucK's virtual filesystem
+     * Asynchronously fetch and load a file from URL to ChucK's virtual filesystem after ChucK's initialization.
+     * File can be plain text or binary data (.wav, .ck, etc.).
+     * **Note:** If asynchronous loading can be avoided, use {@link init} to preload your files instead.
+     *
      * @example
      * ```ts
-     * theChuck.loadFile("./myFile.ck");
+     * await theChuck.loadFile("./myFile.ck");
+     * theChuck.runFile("myFile.ck")
      * ```
+     *
+     * @example
+     * ```ts
+     * await theChuck.loadFile("myFile.wav");
+     * theChuck.runCode(`SndBuf buf("myFile.wav"); buf.length => now;`);
+     * ```
+     *
      * @param url path or url to a file to fetch and load file
      * @returns Promise of fetch request
      */
