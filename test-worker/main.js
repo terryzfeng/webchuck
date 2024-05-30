@@ -14,7 +14,7 @@ let theChuck;
 document.getElementById('action').addEventListener('click', async () => {
     // Initialize default ChucK object, if not already initialized
     if (theChuck === undefined) {
-        theChuck = await Chuck.init([], audioContext, undefined, "../src/");
+        theChuck = await Chuck.initAsWorker([], audioContext, undefined, "../src/");
         // TODO: @tzfeng 
         // default only works when there is input going into chuck, otherwise atomic is never triggered
         // currently hacked a workaround

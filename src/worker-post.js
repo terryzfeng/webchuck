@@ -777,7 +777,6 @@ function _findShredToReplace()
  */
 onmessage = async (eventFromMain) => {
   if (eventFromMain.data.message === 'INITIALIZE_WORKER') {
-    console.log(eventFromMain.data);
     await initialize(eventFromMain.data.options, eventFromMain.data.options.preloadedFiles, eventFromMain.data.options.wasm);
     return;
   }
@@ -877,7 +876,7 @@ function handle_message(event) {
       break;
     }
     case 'removeLastCode': {
-      const shredID = this.findMostRecentActiveShred();
+      const shredID = _findMostRecentActiveShred();
       // if we found a shred, remove it, otherwise,
       // there are no shreds left to remove
       if (shredID) {

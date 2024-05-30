@@ -164,7 +164,7 @@ export default class Chuck extends window.AudioWorkletNode {
 
     const chuck = new Chuck(audioContext, "chuck-node", processorOptions, undefined, whereIsChuck);
 
-    // Remember the chugins that were loaded
+    // Remember the chugins that were loaded, clear static chuginsToLoad
     chuck.chugins = Chuck.chuginsToLoad.map((chugin) => chugin.virtualFilename.split("/").pop()!);
     Chuck.chuginsToLoad = []; // clear
 
@@ -210,6 +210,8 @@ export default class Chuck extends window.AudioWorkletNode {
     whereIsChuck: string = "https://chuck.stanford.edu/webchuck/src/", // default Chuck src location
   ): Promise<Chuck> {
     const wasm = await loadWasm(whereIsChuck);
+    // Add Chugins to filenamesToPreload
+    filenamesToPreload = filenamesToPreload.concat(Chuck.chuginsToLoad);
     const preloadedFiles = await preloadFiles(filenamesToPreload);
 
     let defaultContextFlag: boolean = false;
@@ -218,7 +220,6 @@ export default class Chuck extends window.AudioWorkletNode {
       defaultContextFlag = true;
     }
     await audioContext.audioWorklet.addModule(whereIsChuck + "webchuck-worker-processor.js");
-    console.log(preloadedFiles);
 
     const workerOptions = {
       srate: audioContext.sampleRate,
@@ -227,8 +228,11 @@ export default class Chuck extends window.AudioWorkletNode {
       wasm,
     };
 
-    console.log("yo");
     const chuck = new Chuck(audioContext, "chuck-processor", {}, workerOptions, whereIsChuck);
+
+    // Remember the chugins that were loaded, clear static chuginsToLoad
+    chuck.chugins = Chuck.chuginsToLoad.map((chugin) => chugin.virtualFilename.split("/").pop()!);
+    Chuck.chuginsToLoad = []; // clear
 
     // Auto-connect
     if (defaultContextFlag) {

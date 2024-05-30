@@ -292,7 +292,7 @@ class Chuck extends window.AudioWorkletNode {
             whereIsChuck,
         };
         const chuck = new Chuck(audioContext, "chuck-node", processorOptions, undefined, whereIsChuck);
-        // Remember the chugins that were loaded
+        // Remember the chugins that were loaded, clear static chuginsToLoad
         chuck.chugins = Chuck.chuginsToLoad.map((chugin) => chugin.virtualFilename.split("/").pop());
         Chuck.chuginsToLoad = []; // clear
         // Connect node to default destination if using default audio context
@@ -331,6 +331,8 @@ class Chuck extends window.AudioWorkletNode {
     static async initAsWorker(filenamesToPreload, audioContext, numOutChannels = 1, // TODO: need to be able to support 2
     whereIsChuck = "https://chuck.stanford.edu/webchuck/src/") {
         const wasm = await loadWasm(whereIsChuck);
+        // Add Chugins to filenamesToPreload
+        filenamesToPreload = filenamesToPreload.concat(Chuck.chuginsToLoad);
         const preloadedFiles = await preloadFiles(filenamesToPreload);
         let defaultContextFlag = false;
         if (audioContext === undefined) {
@@ -338,15 +340,16 @@ class Chuck extends window.AudioWorkletNode {
             defaultContextFlag = true;
         }
         await audioContext.audioWorklet.addModule(whereIsChuck + "webchuck-worker-processor.js");
-        console.log(preloadedFiles);
         const workerOptions = {
             srate: audioContext.sampleRate,
             channelCount: numOutChannels,
             preloadedFiles,
             wasm,
         };
-        console.log("yo");
         const chuck = new Chuck(audioContext, "chuck-processor", {}, workerOptions, whereIsChuck);
+        // Remember the chugins that were loaded, clear static chuginsToLoad
+        chuck.chugins = Chuck.chuginsToLoad.map((chugin) => chugin.virtualFilename.split("/").pop());
+        Chuck.chuginsToLoad = []; // clear
         // Auto-connect
         if (defaultContextFlag) {
             chuck.connect(audioContext.destination);
