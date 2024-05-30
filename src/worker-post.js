@@ -300,10 +300,6 @@ class RingBuffer {
 // ------------------------------------------------------------------------ //
 // ------------------------------------------------------------------------ //
 
-let globalInit = false;
-let globalPromise = undefined;
-let chucks = {}; // TODO: @tzfeng make this only 1 chuck
-
 // Initialization and cleanup
 let setDataDir, setLogLevel, initChuckInstance, clearChuckInstance,
     clearGlobals, cleanupChuckInstance, cleanRegisteredChucks;
@@ -525,8 +521,11 @@ function processKernel() {
     console.error('Found NaN at buffer index: %d', inputReadIndex);
   }
 
-  _heapInputBuffer.adaptChannel( 1 ); // TODO: @tzfeng hardcoded to 1 channel
+  // TODO: @tzfeng hardcoded to channelCount, this might dynamically change in 
+  // the web audio node graph
+  _heapInputBuffer.adaptChannel( CONFIG.channelCount ); 
 
+  // Single Channel
   // Copy shared input ring buffer into chuck's heap
   if (inputReadIndex + CONFIG.kernelLength < CONFIG.ringBufferLength) {
     // If we can copy the entire kernel from ring buffer
@@ -541,6 +540,23 @@ function processKernel() {
     _heapInputBuffer.getChannelData(0).set(secondHalf, firstHalf.length); // start at end of first half
     inputReadIndex = secondHalf.length;
   }
+  // Multi Channel
+  // for (let channel = 0; channel < CONFIG.channelCount; ++channel) {
+  //   // Copy shared input ring buffer into chuck's heap
+  //   if (inputReadIndex + CONFIG.kernelLength < CONFIG.ringBufferLengthSingle) {
+  //     // If we can copy the entire kernel from ring buffer
+  //     _heapInputBuffer.getChannelData(channel).set(InputRingBuffer[channel].subarray(inputReadIndex, inputReadIndex + CONFIG.kernelLength));
+  //     inputReadIndex += CONFIG.kernelLength;
+  //   } else {
+  //     // When we cross the ring buffer boundary and need to wraparound, copy in two parts
+  //     const splitIndex = CONFIG.ringBufferLengthSingle - inputReadIndex;
+  //     const firstHalf = InputRingBuffer[channel].subarray(inputReadIndex); // index to end
+  //     const secondHalf = InputRingBuffer[channel].subarray(0, CONFIG.kernelLength - splitIndex); // beginning to leftover index
+  //     _heapInputBuffer.getChannelData(channel).set(firstHalf);
+  //     _heapInputBuffer.getChannelData(channel).set(secondHalf, firstHalf.length); // start at end of first half
+  //     inputReadIndex = secondHalf.length;
+  //   }
+  // }
 
   // Chuck process input and output buffers 
   _chuckWasmModule._chuckManualAudioCallback(
@@ -548,12 +564,13 @@ function processKernel() {
     _heapInputBuffer.getHeapAddress(),
     _heapOutputBuffer.getHeapAddress(),
     CONFIG.kernelLength, // frame size (probably 1024)
-    1, // in channels
-    1, // out channels
+    CONFIG.channelCount, // in channels
+    CONFIG.channelCount, // out channels
   );
 
-  _heapOutputBuffer.adaptChannel( 1 );
+  _heapOutputBuffer.adaptChannel( CONFIG.channelCount );
 
+  // Single Channel
   // Copy chuck's heap into shared output ring buffer
   if (outputWriteIndex + CONFIG.kernelLength < CONFIG.ringBufferLength) {
     // If we can copy the entire kernel from ring buffer
@@ -568,6 +585,23 @@ function processKernel() {
     OutputRingBuffer[0].set(secondHalf, 0);
     outputWriteIndex = secondHalf.length;
   }
+  // Multi Channel
+  // for (let channel = 0; channel < CONFIG.channelCount; ++channel) {
+  //   // Copy chuck's heap into shared output ring buffer
+  //   if (outputWriteIndex + CONFIG.kernelLength < CONFIG.ringBufferLengthSingle) {
+  //     // If we can copy the entire kernel from ring buffer
+  //     OutputRingBuffer[0].set(_heapOutputBuffer.getChannelData(channel), outputWriteIndex);
+  //     outputWriteIndex += CONFIG.kernelLength;
+  //   } else {
+  //     // When we cross the ring buffer boundary and need to wraparound, copy in two parts
+  //     const splitIndex = CONFIG.ringBufferLengthSingle - outputWriteIndex;
+  //     const firstHalf = _heapOutputBuffer.getChannelData(0).subarray(0, splitIndex);
+  //     const secondHalf = _heapOutputBuffer.getChannelData(0).subarray(splitIndex);
+  //     OutputRingBuffer[0].set(firstHalf, outputWriteIndex);
+  //     OutputRingBuffer[0].set(secondHalf, 0);
+  //     outputWriteIndex = secondHalf.length;
+  //   }
+  // }
 
   States[STATE.IB_READ_INDEX] = inputReadIndex;
   States[STATE.OB_WRITE_INDEX] = outputWriteIndex;
@@ -634,6 +668,7 @@ async function initialize(options, preloadedFiles, wasm) {
   };
 
   // Get TypedArrayView from SAB.
+  // TODO: @tzfeng how to adapt for 2 channels?
   States = new Int32Array(SharedBuffers.states);
   InputRingBuffer = [new Float32Array(SharedBuffers.inputRingBuffer)];
   OutputRingBuffer = [new Float32Array(SharedBuffers.outputRingBuffer)];

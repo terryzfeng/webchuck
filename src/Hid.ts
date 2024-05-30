@@ -8,7 +8,6 @@ enum HidMsgType {
   WHEEL_MOTION = 6,
 }
 
-//TODO: Update the latest mouse.ck and kb.ck files
 /**
  * Introducing HID (Human Interface Device) support for WebChucK. HID wraps
  * JavaScript mouse/keyboard event listeners enabling mouse and keyboard
