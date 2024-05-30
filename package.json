@@ -8,6 +8,7 @@
     "dist/**/*"
   ],
   "scripts": {
+    "append": "cat src/worker-pre.js src/worker-post.js > src/webchuck-worker.js",
     "build": "tsc && rollup dist/index.js --file src/wc-bundle.js --format esm",
     "test": "npm run build && bash ./test.sh",
     "clean": "rm -rf dist/ && rm -rf docs/ && rm -rf src/wc-bundle.js",

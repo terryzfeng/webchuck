@@ -1,7 +1,7 @@
-import type { File, Filename } from "./utils";
+import type { Filename } from "./utils";
 /**
- * WebChucK: ChucK Web Audio Node class.
- * Use **{@link init | Init}** to create a ChucK instance
+ * WebChucK: ChucK as a Web Audio API node through the AudioWorklet interface.
+ * Use **{@link init | Init}** to create a ChucK instance.
  */
 export default class Chuck extends window.AudioWorkletNode {
     private deferredPromises;
@@ -9,25 +9,29 @@ export default class Chuck extends window.AudioWorkletNode {
     private eventCallbacks;
     private eventCallbackCounter;
     private isReady;
-    /** @internal */
-    static chuckID: number;
-    /** @internal */
-    static chuginsToLoad: Filename[];
+    private messagePort;
+    private worker;
+    private static chuckID;
+    private static chuginsToLoad;
     private chugins;
-    worker: Worker;
-    constructor(preloadedFiles: File[], audioContext: AudioContext, whereIsChuck: string, wasm: ArrayBuffer, numOutChannels?: number);
-    static init2(filenamesToPreload: Filename[], audioContext: AudioContext, numOutChannels?: number, // TODO: change to 2
-    whereIsChuck?: string): Promise<Chuck>;
     /**
-     * Handle messages from WebChuck Worker
+     * Private internal constructor for a ChucK AudioWorklet Web Audio Node. Use
+     * public **{@link init| Init}** to create a ChucK instance.
      *
-     * @param {Event} eventFromWorker
+     * @param audioContext AudioContext to connect ChucK to
+     * @param processorName Name of the AudioWorkletProcessor
+     * @param processorOptions Options for the AudioWorkletProcessor
+     * @param workerOptions Options for the Web Worker (if using)
+     * @param whereIsChuck URL to WebChucK src folder
+     * @returns ChucK AudioWorklet Node
      */
-    _onWorkerInitialized(eventFromWorker: any): void;
-    _onProcessorInitialized(eventFromProcessor: any): void;
+    private constructor();
     /**
-     * Initialize a ChucK Web Audio Node. By default, a new AudioContext is created and ChucK is connected to the AudioContext destination.
-     * **Note:** Init is overloaded to allow for custom AudioContext, custom number of output channels, and custom location of `whereIsChuck`. Skip an argument by passing in `undefined`.
+     * Initialize a ChucK AudioWorklet Node. By default, a new AudioContext is
+     * created and ChucK is connected to the AudioContext destination.
+     * **Note:** Init is also overloaded to allow for custom AudioContext, number
+     * of output channels, and custom URL location to `whereIsChuck`.Skip an
+     * argument by passing `undefined`.
      *
      * @example
      * ```ts
@@ -54,12 +58,59 @@ export default class Chuck extends window.AudioWorkletNode {
      * theChuck = await Chuck.init([], undefined, undefined, "./src");
      * ```
      *
-     * @param filenamesToPreload Array of Files to preload into ChucK's filesystem `[{serverFilename: "./path/filename", virtualFilename: "filename"}...]`
-     * @param audioContext Optional parameter if you want to use your own AudioContext. **Note**: If an AudioContext is passed in, you will need to connect the ChucK instance to your own destination.
-     * @param numOutChannels Optional custom number of output channels. Default is 2 channel stereo and the Web Audio API supports up to 32 channels.
-     * @param whereIsChuck Optional custom url to your WebChucK `src` folder containing `webchuck.js` and `webchuck.wasm`. By default, `whereIsChuck` is {@link https://chuck.stanford.edu/webchuck/src | here}.
-     * @returns WebChucK ChucK instance
+     * @param filenamesToPreload Array of Files to preload into ChucK's filesystem
+     * `[{serverFilename: "./path/filename.ck", virtualFilename: "filename.ck"}...]`
+     * @param audioContext Optional parameter if you want to use your own AudioContext.
+     * **Note**: If an AudioContext is passed in, you will need to connect the ChucK node
+     * to your own destination.
+     * @param numOutChannels Optional custom number of output channels. Default is 2 channel
+     * stereo. Web Audio API supports up to 32 channels.
+     * @param whereIsChuck Optional custom URL to your WebChucK `src` folder containing
+     * `webchuck.js` and `webchuck.wasm`. By default, `whereIsChuck` is
+     * {@link https://chuck.stanford.edu/webchuck/src | here}.
+     * @returns ChucK AudioWorklet Node
      */
+    static init(filenamesToPreload: Filename[], audioContext?: AudioContext, numOutChannels?: number, whereIsChuck?: string): Promise<Chuck>;
+    /**
+     * Initialize a ChucK AudioWorklet Node using a Web Worker as the backend.
+     * This is intended for WebChuGL (WebChucK Graphics) usage to handle both
+     * audio and graphics rendering.
+     * **Note:** WebChucK as a Web Worker is not supported in Firefox. WebChucK
+     * will not run on the real-time audio thread and also has a fixed buffer
+     * size of 1024. Use {@link init} for maximum audio DSP performance.
+     *
+     * @example
+     * ```ts
+     * // note: usage options same as init
+     * theChuck = await Chuck.initAsWorker([]);
+     * ```
+     *
+     * @param filenamesToPreload Array of Files to preload into ChucK's filesystem
+     * `[{serverFilename: "./path/filename.ck", virtualFilename: "filename.ck"}...]`
+     * @param audioContext Optional parameter if you want to use your own AudioContext.
+     * **Note**: If an AudioContext is passed in, you will need to connect the ChucK node
+     * to your own destination.
+     * @param numOutChannels Optional custom number of output channels. Default is 2
+     * channel stereo. Web Audio API supports up to 32 channels.
+     * @param whereIsChuck Optional custom URL to your WebChucK `src` folder containing
+     * `webchuck-worker.js`, `webchuck-worker-processor.js` and `webchuck.wasm`. By
+     * default, `whereIsChuck` is {@link https://chuck.stanford.edu/webchuck/src | here}.
+     * @returns ChucK AudioWorklet Node
+     */
+    static initAsWorker(filenamesToPreload: Filename[], audioContext: AudioContext, numOutChannels?: number, // TODO: need to be able to support 2
+    whereIsChuck?: string): Promise<Chuck>;
+    /**
+     * @hidden
+     * Handle messages from WebChuck Worker
+     * @param {Event} eventFromWorker
+     */
+    _onWorkerInitialized(eventFromWorker: any): void;
+    /**
+     * @hidden
+     * Handle messages from WebChuck Worker Processor (sink)
+     * @param eventFromProcessor
+     */
+    _onProcessorInitialized(eventFromProcessor: any): void;
     /**
      * Private function for ChucK to handle execution of tasks.
      * Will create a Deferred promise that wraps a task for WebChucK to execute
