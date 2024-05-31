@@ -93,9 +93,13 @@ class HeapAudioBuffer {
       let startByteOffset = this._dataPtr + i * channelByteSize;
       let endByteOffset = startByteOffset + channelByteSize;
       // Get the actual array index by dividing the byte offset by 2 bytes.
+      // this._channelData[i] =
+      //     this._module.HEAPF32.subarray(startByteOffset >> BYTES_PER_UNIT,
+      //                                   endByteOffset >> BYTES_PER_UNIT);
+
       this._channelData[i] =
-          this._module.HEAPF32.subarray(startByteOffset >> BYTES_PER_UNIT,
-                                        endByteOffset >> BYTES_PER_UNIT);
+          this._module.GROWABLE_HEAP_F32().subarray(startByteOffset >> BYTES_PER_UNIT,
+            endByteOffset >> BYTES_PER_UNIT);
     }
   }
 
@@ -726,6 +730,8 @@ async function initChuckWasm(preloadedFiles, wasm) {
 
   setLogLevel(3);
   initChuckInstance(CHUCK_ID, CONFIG.sampleRate, CONFIG.channelCount, CONFIG.channelCount);
+
+  console.log("ChucK WASM initialized");
 }
 
 

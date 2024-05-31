@@ -14,6 +14,8 @@ let theChuck;
 document.getElementById('action').addEventListener('click', async () => {
     // Initialize default ChucK object, if not already initialized
     if (theChuck === undefined) {
+        Chuck.loadChugin("./ChuGL.chug.wasm");
+        // Chuck.loadChugin("./ABSaturator.chug.wasm");
         theChuck = await Chuck.initAsWorker([], audioContext, 1, "../src/");
         // TODO: @tzfeng 
         // default only works when there is input going into chuck, otherwise atomic is never triggered
@@ -22,36 +24,47 @@ document.getElementById('action').addEventListener('click', async () => {
         audioContext.resume();
 
         theChuck.runCode(`
-        // patch
-        Blit s => ADSR e => JCRev r => dac;
-        .5 => s.gain;
-        .05 => r.mix;
+            <<< GG.foo >>>; // should print 12345
+            Blit s => dac;
+            Blit s2 => dac;
+            .5 => s.gain;
+            .2 => s2.gain;
 
-        // set adsr
-        e.set( 5::ms, 3::ms, .5, 5::ms );
+            1::second => now;
+        `);
 
-        // an array
-        [ 0, 2, 4, 7, 9, 11 ] @=> int hi[];
+        // theChuck.runCode(`
+        // // patch
+        // <<< GG.foo >>>; // should print 12345
+        // Blit s => ADSR e => JCRev r => dac;
+        // .5 => s.gain;
+        // .05 => r.mix;
 
-        // infinite time loop
-        while( true )
-        {
-            // frequency
-            Std.mtof( 33 + Math.random2(0,3) * 12 +
-                hi[Math.random2(0,hi.size()-1)] ) => s.freq;
+        // // set adsr
+        // e.set( 5::ms, 3::ms, .5, 5::ms );
 
-            // harmonics
-            Math.random2( 1, 5 ) => s.harmonics;
+        // // an array
+        // [ 0, 2, 4, 7, 9, 11 ] @=> int hi[];
 
-            // key on
-            e.keyOn();
-            // advance time
-            120::ms => now;
-            // key off
-            e.keyOff();
-            // advance time
-            5::ms => now;
-        }
-        `)
+        // // infinite time loop
+        // while( true )
+        // {
+        //     // frequency
+        //     Std.mtof( 33 + Math.random2(0,3) * 12 +
+        //         hi[Math.random2(0,hi.size()-1)] ) => s.freq;
+
+        //     // harmonics
+        //     Math.random2( 1, 5 ) => s.harmonics;
+
+        //     // key on
+        //     e.keyOn();
+        //     // advance time
+        //     120::ms => now;
+        //     // key off
+        //     e.keyOff();
+        //     // advance time
+        //     5::ms => now;
+        // }
+        // `)
     }
 });
